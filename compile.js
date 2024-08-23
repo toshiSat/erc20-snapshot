@@ -2,6 +2,9 @@ const fs = require("fs").promises;
 const path = require("path");
 var BigNumber = require("bignumber.js");
 
+const cutOff = 1000;
+const removeLimit = 4;
+const finalRemoveLimit = 10;
 const amountToSplit = new BigNumber(4000000);
 const minimum = 0.01;
 const blacklist = [
@@ -52,6 +55,7 @@ async function processJsonFilesETH(fileNames, outputFileName, multipliers) {
   try {
     let results = {};
     let amountSkipped = new BigNumber(0);
+    let y = 0;
     for (let index = 0; index < fileNames.length; index++) {
       const filePath = path.join(__dirname, fileNames[index]);
       const data = await fs.readFile(filePath, "utf8");
@@ -70,18 +74,24 @@ async function processJsonFilesETH(fileNames, outputFileName, multipliers) {
             results[handle] = results[handle].plus(balance);
           } else {
             results[handle] = new BigNumber(amount).times(multiplier);
+            y++;
           }
         }
       });
     }
 
+    console.log("Amount of results", y);
+    // Distribute 4m to holders
     const totalAmount = Object.values(results).reduce((acc, amount) => {
+      if (amount.gt(cutOff)) {
+        return acc;
+      }
       return acc.plus(amount);
     }, new BigNumber(0));
 
     // Distribute the proportional amount to each result
     for (const handle in results) {
-      if (results.hasOwnProperty(handle)) {
+      if (results.hasOwnProperty(handle) && results[handle].lte(cutOff)) {
         // Calculate the percentage of the total
         const percentage = results[handle].dividedBy(totalAmount);
 
@@ -93,17 +103,83 @@ async function processJsonFilesETH(fileNames, outputFileName, multipliers) {
       }
     }
 
-    // Split the amountSkipped among the entries
-    // const numberOfEntries = Object.keys(results).length;
-    // if (numberOfEntries > 0) {
-    //   const portion = new BigNumber(amountSkipped).dividedBy(numberOfEntries);
+    // add 10 to 50k addresses starting with under 100
+    const sortedHandles = Object.entries(results)
+      .filter(([handle, amount]) => amount.isLessThan(100)) // Filter amounts under 100
+      .sort(([, amountA], [, amountB]) => amountA.comparedTo(amountB)) // Sort by amount
+      .slice(0, 50000); // Get the first 50,000 handles
 
-    //   for (const handle in results) {
-    //     if (results.hasOwnProperty(handle)) {
-    //       results[handle] = results[handle].plus(portion);
-    //     }
-    //   }
-    // }
+    // Step 2: Add 10 to the amounts of these handles
+    sortedHandles.forEach(([handle]) => {
+      results[handle] = results[handle].plus(10);
+    });
+
+    const totalAmountRemoved = Object.values(results).reduce((acc, amount) => {
+      if (amount.gt(removeLimit)) {
+        return acc;
+      }
+      return acc.plus(amount);
+    }, new BigNumber(0));
+    console.log("Total amount Removed:", totalAmountRemoved.toString());
+
+    // Distribute the proportional amount to each result
+    for (const handle in results) {
+      if (results.hasOwnProperty(handle) && results[handle].lte(removeLimit)) {
+        delete results[handle];
+      }
+    }
+
+    const totalAmountAfterDelete = Object.values(results).reduce((acc, amount) => {
+      if (amount.gt(cutOff)) {
+        return acc;
+      }
+      return acc.plus(amount);
+    }, new BigNumber(0));
+
+    for (const handle in results) {
+      if (results.hasOwnProperty(handle) && results[handle].lte(cutOff)) {
+        // Calculate the percentage of the total
+        const percentage = results[handle].dividedBy(totalAmountAfterDelete);
+
+        // Calculate the proportional amount to add
+        const proportionalAmount = totalAmountRemoved.times(percentage);
+
+        // Add the proportional amount to the current result
+        results[handle] = results[handle].plus(proportionalAmount);
+      }
+    }
+
+    // Remove under 10 and distribute
+    const totalAmountRemovedFinal = Object.values(results).reduce((acc, amount) => {
+      if (amount.gt(finalRemoveLimit)) {
+        return acc;
+      }
+      return acc.plus(amount);
+    }, new BigNumber(0));
+    console.log("Total amount Removed Final:", totalAmountRemovedFinal.toString());
+
+    for (const handle in results) {
+      if (results.hasOwnProperty(handle) && results[handle].lte(finalRemoveLimit)) {
+        delete results[handle];
+      }
+    }
+
+    const totalAmountFinal = Object.values(results).reduce((acc, amount) => {
+      return acc.plus(amount);
+    }, new BigNumber(0));
+
+    for (const handle in results) {
+      if (results.hasOwnProperty(handle)) {
+        // Calculate the percentage of the total
+        const percentage = results[handle].dividedBy(totalAmountFinal);
+
+        // Calculate the proportional amount to add
+        const proportionalAmount = totalAmountRemovedFinal.times(percentage);
+
+        // Add the proportional amount to the current result
+        results[handle] = results[handle].plus(proportionalAmount);
+      }
+    }
 
     // Convert the results object back to an array of objects
     const outputData = Object.entries(results)
@@ -200,6 +276,6 @@ processSolFiles(solFileName, solAtlasFileName, solOutputFileName);
 // Example usage
 const inputFiles = ["./balances/AXS.json", "./balances/FOX.json", "./balances/GODS.json", "./balances/PRIME.json"];
 const multipliers = [0.0235, 0.000212, 0.00068, 0.036];
-const outputFileName = "eth-whitelist-no-split.json";
+const outputFileName = "eth-whitelist.json";
 
 processJsonFilesETH(inputFiles, outputFileName, multipliers);
