@@ -196,7 +196,7 @@ async function processJsonFilesETH(fileNames, outputFileName, multipliers) {
       .map((item) => {
         return {
           handle: item.handle,
-          amount: item.amount.toString() // Convert back to string after sorting
+          amount: item.amount.times(new BigNumber(10).pow(9)).integerValue(BigNumber.ROUND_DOWN).toString() // Convert back to string after sorting
         };
       });
 
@@ -254,7 +254,7 @@ async function processSolFiles(solFileName, solAtlasFileName, outputFileName) {
       .sort((a, b) => b[1].comparedTo(a[1])) // Sort by amount
       .map(([handle, amount]) => ({
         handle,
-        amount: amount.toString() // Convert back to string
+        amount: amount.times(new BigNumber(10).pow(9)).integerValue(BigNumber.ROUND_DOWN).toString() // Convert back to string
       }));
 
     // Write the transformed data to the output file
